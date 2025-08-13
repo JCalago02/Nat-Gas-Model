@@ -1,10 +1,81 @@
 import requests
+import pandas as pd
+from datetime import datetime, timedelta
+from typing import Dict, Tuple, Optional, List
 
+NYC_COASTAL_REGION_ID = 3004
+
+def get_noaa_region_data() -> Dict[int, Tuple[str, str]]:
+    REGION_DATA_URL = "https://ftp.cpc.ncep.noaa.gov/htdocs/degree_days/weighted/daily_data/regions/ClimateDivisions.txt"
+    res = requests.get(REGION_DATA_URL)
+
+    lines = res.text.split("\n")
+
+    columns = lines[4].split("|")
+    id_idx = columns.index("Region ID")
+    state_idx = columns.index("ST")
+    name_idx = columns.index("Name")
+
+    rows = [row.split("|") for row in lines[5:-1]] # Skip last empty line
+
+    id_to_region_and_st = {int(row[id_idx]) : (row[state_idx], row[name_idx]) for row in rows}
+
+    return id_to_region_and_st
+
+def get_noaa_day_data(year: int) -> Optional[pd.DataFrame]:
+    heating_days = get_noaa_heating_days(year)
+    cooling_days = get_noaa_cooling_days(year)
+    if heating_days is None or cooling_days is None:
+        return None
+
+    return pd.merge(heating_days, cooling_days, on="Week")
+
+def get_noaa_cooling_days(year: int) -> Optional[pd.DataFrame]:
+    res = requests.get(f"https://ftp.cpc.ncep.noaa.gov/htdocs/degree_days/weighted/daily_data/{year}/ClimateDivisions.Cooling.txt")
+    lines = res.text.split("\n")
+
+    data = extract_degree_day_data(year, lines, NYC_COASTAL_REGION_ID)
+    if data is None:
+        print(f"No data found for NYC Coastal Region for {year}")
+    return data
+
+def get_noaa_heating_days(year: int) -> Optional[pd.DataFrame]:
+    res = requests.get(f"https://ftp.cpc.ncep.noaa.gov/htdocs/degree_days/weighted/daily_data/{year}/ClimateDivisions.Heating.txt")
+    lines = res.text.split("\n")
+
+    data = extract_degree_day_data(year, lines, NYC_COASTAL_REGION_ID)
+    if data is None:
+        print(f"No data found for NYC Coastal Region for {year}")
+    return data
+
+
+def extract_degree_day_data(year: int, lines: List[str], region_id: int) -> Optional[pd.DataFrame]:
+    day_type = "Cooling_Days" if "Cooling" in lines[0] else "Heating_Days"
+    n_days = len(lines[3].split("|")) - 1 
+
+    week_sum = [0 for _ in range(53)]
+    for row in [row.split("|") for row in lines[4:-1]]: # Skip last empty line
+
+        if int(row[0]) != region_id:
+            continue
+
+        date = datetime(year, 1, 1)
+        for day_n in range(n_days):
+            cooling_days = int(row[day_n + 1])
+            week_n = int(date.strftime("%U"))
+
+            week_sum[week_n] += cooling_days
+
+            date += timedelta(days=1)
+
+        columns = ["Week", day_type]
+        df = pd.DataFrame([(week_n, days) for week_n, days in enumerate(week_sum)], columns=columns)
+        return df
+    return None
 
 if __name__ == "__main__":
-    test = requests.get("https://ftp.cpc.ncep.noaa.gov/htdocs/degree_days/weighted/daily_data/2024/ClimateDivisions.Cooling.txt")
-    ab = test.text.split("\n")
-    print(ab[0])
-    print(ab[1])
-    print(ab[3])
+    #print(get_noaa_region_data())
+    day_data = get_noaa_day_data(2024)
+    day_data.to_csv("noaa_day_data.csv", index=False)
+
 
