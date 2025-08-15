@@ -99,16 +99,15 @@ class EIADataPuller:
 
         df = (pd.DataFrame(self._get_all_data(header, POWER_GEN_URL))[EXP_COLS]
             .astype({"value": int, "period": "datetime64[ns]", "respondent-name": "category"})
-        )
-
-        df['Week'] = df['period'].dt.strftime("%U").astype(int)
-        df['Year'] = df['period'].dt.year
-        return (df.groupby(["period", "Year", "Week"])["value"].sum()
+            .assign(Week=lambda x: x['period'].dt.strftime("%U").astype(int),
+                    Year=lambda x: x['period'].dt.year)
+            .groupby(["period", "Year", "Week"])["value"].sum() # Sum across all respondents on a given day
             .reset_index(drop=False)
-            .groupby(["Week", "Year"])["value"].mean()
+            .groupby(["Week", "Year"])["value"].mean() # Average across all days on a given week
             .reset_index(drop=False) 
-            .rename(columns={"value": f"Region_NG_Power_Gen_MWh"})
+            .rename(columns={"value": f"{self.storage_region.name}_NG_Power_Gen_MWh"})
         )
+        return df
 
 
 
@@ -131,14 +130,18 @@ class EIADataPuller:
 
         return (pd.DataFrame(self._get_all_data(header, STORAGE_URL))[EXP_COLS]
             .astype({"value": int, "period": 'datetime64[ns]'})
-            .rename(columns={"value": f"{self.storage_region.name}_Region_NG_Storage_BCF"})
+            .rename(columns={"value": f"{self.storage_region.name}_NG_Storage_BCF"})
             .sort_values(by="period", ascending=False)
             .reset_index(drop=True)
+            .assign(Week=lambda x: x['period'].dt.strftime("%U").astype(int),
+                    Year=lambda x: x['period'].dt.year)
+            .drop(columns=["period"])
         )
 
     def get_ng_usage_data(self, consumption_type: EIAConsumptionType) -> pd.DataFrame:
         USAGE_URL = f"https://api.eia.gov/v2/natural-gas/cons/sum/data/"
         USAGE_START_DATE = "2005-01-01"
+        EXP_COLS = ["period", "value"]
 
         header = self._build_header(
             frequency="monthly",
@@ -148,4 +151,12 @@ class EIADataPuller:
             end=datetime.now().strftime("%Y-%m-%d"),
         )
 
-        return pd.DataFrame(self._get_all_data(header, USAGE_URL))
+        return (pd.DataFrame(self._get_all_data(header, USAGE_URL))[EXP_COLS]
+            .fillna(0)
+            .astype({"value": int, "period": "datetime64[ns]"})
+            .groupby("period")["value"].sum()
+            .reset_index(drop=False)
+            .sort_values(by="period", ascending=True)
+            .assign(Year=lambda x: x["period"].dt.year,
+                    Month=lambda x: x["period"].dt.month)
+        )
