@@ -2,34 +2,35 @@ import matplotlib.pyplot as plt
 
 class EDAPlots:
     @staticmethod
-    def generate_year_plot(df, column: str, title: str):
+    def generate_year_plot(df, time_col: str, value_col: str, plot_title: str):
         """
         Plot a time series by year.
 
         Args:
             df: DataFrame containing the data
-            column: Name of the column to plot
-            title: Title of the plot
+            datetime_col: Name of the datetime column
+            value_col: Name of the value column
+            plot_title: Title of the plot
 
         Raises:
             ValueError: If required columns are missing from the DataFrame
         """
-        req_columns = ['Year', 'DayOfYear', column]
+        req_columns = ["Year", time_col, value_col]
         missing_cols = [col for col in req_columns if col not in df.columns]
         if len(missing_cols) > 0:
             raise ValueError(f"Columns {missing_cols} are required for the plot")
 
         # Plot data column by year 
         plt.figure(figsize=(15, 8))
-        for year in df['Year'].unique():
-            year_data = df[df['Year'] == year]
-            plt.plot(year_data['DayOfYear'], year_data[column], 
+        for year in df["Year"].unique():
+            year_data = df[df["Year"] == year]
+            plt.plot(year_data[time_col], year_data[value_col], 
                     label=str(year), linewidth=2, alpha=0.7)
 
         # Add plot elements 
-        plt.title(title, fontsize=14)
-        plt.xlabel('Day of Year', fontsize=12)
-        plt.ylabel(column, fontsize=12)
+        plt.title(plot_title, fontsize=14)
+        plt.xlabel(time_col, fontsize=12)
+        plt.ylabel(value_col, fontsize=12)
         plt.grid(True, alpha=0.3)
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.tight_layout()

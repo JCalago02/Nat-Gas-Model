@@ -1,8 +1,8 @@
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Dict, Tuple, Optional, List
-
+from typing import Dict, Tuple, Optional, List, Set
+from utils.custom_types import storage_region_to_noaa_states, StorageRegion
 NYC_COASTAL_REGION_ID = 3004
 
 def get_noaa_region_data() -> Dict[int, Tuple[str, str]]:
@@ -22,41 +22,15 @@ def get_noaa_region_data() -> Dict[int, Tuple[str, str]]:
 
     return id_to_region_and_st
 
-def get_noaa_day_data(year: int) -> Optional[pd.DataFrame]:
-    heating_days = get_noaa_heating_days(year)
-    cooling_days = get_noaa_cooling_days(year)
-    if heating_days is None or cooling_days is None:
-        return None
-
-    return pd.merge(heating_days, cooling_days, on="Week")
-
-def get_noaa_cooling_days(year: int) -> Optional[pd.DataFrame]:
-    res = requests.get(f"https://ftp.cpc.ncep.noaa.gov/htdocs/degree_days/weighted/daily_data/{year}/ClimateDivisions.Cooling.txt")
-    lines = res.text.split("\n")
-
-    data = extract_degree_day_data(year, lines, NYC_COASTAL_REGION_ID)
-    if data is None:
-        print(f"No data found for NYC Coastal Region for {year}")
-    return data
-
-def get_noaa_heating_days(year: int) -> Optional[pd.DataFrame]:
-    res = requests.get(f"https://ftp.cpc.ncep.noaa.gov/htdocs/degree_days/weighted/daily_data/{year}/ClimateDivisions.Heating.txt")
-    lines = res.text.split("\n")
-
-    data = extract_degree_day_data(year, lines, NYC_COASTAL_REGION_ID)
-    if data is None:
-        print(f"No data found for NYC Coastal Region for {year}")
-    return data
-
-
-def extract_degree_day_data(year: int, lines: List[str], region_id: int) -> Optional[pd.DataFrame]:
+def extract_degree_day_data(year: int, lines: List[str], states: List[str]) -> pd.DataFrame:
+    states: Set[str] = set(states)
     day_type = "Cooling_Days" if "Cooling" in lines[0] else "Heating_Days"
     n_days = len(lines[3].split("|")) - 1 
 
-    week_sum = [0 for _ in range(53)]
+    week_sum: Dict[int, int] = {} 
     for row in [row.split("|") for row in lines[4:-1]]: # Skip last empty line
 
-        if int(row[0]) != region_id:
+        if row[0] not in states:
             continue
 
         date = datetime(year, 1, 1)
@@ -64,18 +38,49 @@ def extract_degree_day_data(year: int, lines: List[str], region_id: int) -> Opti
             cooling_days = int(row[day_n + 1])
             week_n = int(date.strftime("%U"))
 
-            week_sum[week_n] += cooling_days
+            week_sum[week_n] = week_sum.get(week_n, 0) + cooling_days
 
             date += timedelta(days=1)
 
-        columns = ["Week", day_type]
-        df = pd.DataFrame([(week_n, days) for week_n, days in enumerate(week_sum)], columns=columns)
-        return df
-    return None
+    columns = ["Week", day_type]
+        
+    df = pd.DataFrame([(week_n, days) for week_n, days in week_sum.items()], columns=columns)
+    return df
+
+def get_noaa_day_data(start_year: int, end_year: int, states: List[str]) -> Optional[pd.DataFrame]:
+    dfs: List[pd.DataFrame] = []
+    for year in range(start_year, end_year + 1):
+        print(f"Getting data for {year}")
+        heating_days = get_noaa_heating_days(year, states)
+        cooling_days = get_noaa_cooling_days(year, states)
+        yearly_df = (pd.merge(heating_days, cooling_days, on="Week")
+            .assign(Year=year)
+        )
+        dfs.append(yearly_df)
+
+    return pd.concat(dfs)
+
+def get_noaa_cooling_days(year: int, states: List[str]) -> Optional[pd.DataFrame]:
+    res = requests.get(f"https://ftp.cpc.ncep.noaa.gov/htdocs/degree_days/weighted/daily_data/{year}/StatesCONUS.Cooling.txt")
+    lines = res.text.split("\n")
+
+    data = extract_degree_day_data(year, lines, states)
+    if data is None:
+        print(f"No data found for NYC Coastal Region for {year}")
+    return data
+
+def get_noaa_heating_days(year: int, states: List[str]) -> Optional[pd.DataFrame]:
+    res = requests.get(f"https://ftp.cpc.ncep.noaa.gov/htdocs/degree_days/weighted/daily_data/{year}/StatesCONUS.Heating.txt")
+    lines = res.text.split("\n")
+
+    data = extract_degree_day_data(year, lines, states)
+    if data is None:
+        print(f"No data found for NYC Coastal Region for {year}")
+    return data
 
 if __name__ == "__main__":
     #print(get_noaa_region_data())
-    day_data = get_noaa_day_data(2024)
+    day_data = get_noaa_day_data(2010, 2024, storage_region_to_noaa_states[StorageRegion.EAST])
     day_data.to_csv("noaa_day_data.csv", index=False)
 
 
