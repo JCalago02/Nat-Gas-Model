@@ -27,7 +27,7 @@ def extract_degree_day_data(year: int, lines: List[str], states: List[str]) -> p
     day_type = "Cooling_Days" if "Cooling" in lines[0] else "Heating_Days"
     n_days = len(lines[3].split("|")) - 1 
 
-    week_sum: Dict[int, int] = {} 
+    day_sum: Dict[datetime, int] = {}
     for row in [row.split("|") for row in lines[4:-1]]: # Skip last empty line
 
         if row[0] not in states:
@@ -36,15 +36,14 @@ def extract_degree_day_data(year: int, lines: List[str], states: List[str]) -> p
         date = datetime(year, 1, 1)
         for day_n in range(n_days):
             cooling_days = int(row[day_n + 1])
-            week_n = int(date.strftime("%U"))
 
-            week_sum[week_n] = week_sum.get(week_n, 0) + cooling_days
+            day_sum[date] = day_sum.get(date, 0) + cooling_days
 
             date += timedelta(days=1)
 
-    columns = ["Week", day_type]
-        
-    df = pd.DataFrame([(week_n, days) for week_n, days in week_sum.items()], columns=columns)
+    columns = ["period", day_type]
+
+    df = pd.DataFrame([(date, day_sum[date]) for date in day_sum], columns=columns)
     return df
 
 def get_noaa_day_data(start_year: int, end_year: int, states: List[str]) -> Optional[pd.DataFrame]:
@@ -53,10 +52,8 @@ def get_noaa_day_data(start_year: int, end_year: int, states: List[str]) -> Opti
         print(f"Getting data for {year}")
         heating_days = get_noaa_heating_days(year, states)
         cooling_days = get_noaa_cooling_days(year, states)
-        yearly_df = (pd.merge(heating_days, cooling_days, on="Week")
-            .assign(Year=year)
-        )
-        dfs.append(yearly_df)
+        comb_df = pd.merge(heating_days, cooling_days, on="period")
+        dfs.append(comb_df)
 
     return pd.concat(dfs)
 

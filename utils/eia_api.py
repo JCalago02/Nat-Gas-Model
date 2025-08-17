@@ -10,6 +10,7 @@ from utils.custom_types import (
     Timezone, 
     StorageRegion, 
     EIAConsumptionType,
+    storage_region_to_noaa_states,
     storage_region_to_power_gen_respondent_region
 )
 from typing import Any, Optional
@@ -24,6 +25,7 @@ class EIADataPuller:
         self.storage_region: StorageRegion = storage_region
         self.power_gen_respondents: List[Respondent] = storage_region_to_power_gen_respondent_region[storage_region]
         self.eia_duoareas: List[str] = [f"S{abbr.value}" for abbr in self.power_gen_respondents]
+        self.eia_withdrawl_series: List[str] = [f"N9010{state_abbr}2" for state_abbr in storage_region_to_noaa_states[storage_region]]
 
     def _build_header(self, 
         frequency: Optional[str], 
@@ -62,8 +64,12 @@ class EIADataPuller:
         header["length"] = MAX_QUERY_SIZE
         req = requests.get(url, headers=self._generate_header_str(header), params={"api_key": self.api_key})
 
-        print(req.json())
-        return req.json()['response']['data'], int(req.json()['response']['total'])
+        try:
+            print(req.json())
+            return req.json()['response']['data'], int(req.json()['response']['total'])
+        except Exception as e:
+            print(f"Response: {req.text}")
+            raise ValueError(f"Error parsing JSON: {e}")
     
     def _get_data_with_offset(self, header: Dict[str, Any], url: str, offset: int, length: int) -> List[Dict[str, Any]]:
         header["offset"] = offset
@@ -117,7 +123,7 @@ class EIADataPuller:
         region. Data is retrieved at a weekly frequency.
         """
         STORAGE_URL = f"https://api.eia.gov/v2/natural-gas/stor/wkly/data/"
-        STORAGE_START_DATE= "2019-01-01"
+        STORAGE_START_DATE= "2010-01-01"
         EXP_COLS = ["period", "value"]
 
         header = self._build_header(
@@ -135,12 +141,12 @@ class EIADataPuller:
             .reset_index(drop=True)
             .assign(Week=lambda x: x['period'].dt.strftime("%U").astype(int),
                     Year=lambda x: x['period'].dt.year)
-            .drop(columns=["period"])
+            # .drop(columns=["period"])
         )
 
     def get_ng_usage_data(self, consumption_type: EIAConsumptionType) -> pd.DataFrame:
         USAGE_URL = f"https://api.eia.gov/v2/natural-gas/cons/sum/data/"
-        USAGE_START_DATE = "2005-01-01"
+        USAGE_START_DATE = "2010-01-01"
         EXP_COLS = ["period", "value"]
 
         header = self._build_header(
@@ -158,5 +164,30 @@ class EIADataPuller:
             .reset_index(drop=False)
             .sort_values(by="period", ascending=True)
             .assign(Year=lambda x: x["period"].dt.year,
-                    Month=lambda x: x["period"].dt.month)
+                    Month=lambda x: x["period"].dt.month,
+                    value=lambda x: x["value"] / x["period"].dt.days_in_month * 30) # Scale by days in month
+        )
+
+    def get_ng_withdrawls_data(self) -> pd.DataFrame:
+        WITHDRAWLS_URL = f"https://api.eia.gov/v2/natural-gas/prod/sum/data"
+        WITHDRAWLS_START_DATE = "2010-01-01"
+        
+        EXP_COLS = ["period", "value"]
+
+        header = self._build_header(
+            frequency="monthly",
+            data=["value"],
+            facets={"series": [self.eia_withdrawl_series]},
+            start=WITHDRAWLS_START_DATE,
+            end=datetime.now().strftime("%Y-%m-%d"),
+        )
+
+        return (pd.DataFrame(self._get_all_data(header, WITHDRAWLS_URL))[EXP_COLS]
+            .fillna(0)
+            .astype({"period": "datetime64[ns]", "value" : int})
+            .groupby("period")["value"].sum()
+            .reset_index(drop=False)
+            .assign(Year=lambda x: x["period"].dt.year,
+                    Month=lambda x: x["period"].dt.month,
+                    value=lambda x: x["value"] / x["period"].dt.days_in_month * 30) # Scale by days in month
         )
