@@ -65,7 +65,6 @@ class EIADataPuller:
         req = requests.get(url, headers=self._generate_header_str(header), params={"api_key": self.api_key})
 
         try:
-            print(req.json())
             return req.json()['response']['data'], int(req.json()['response']['total'])
         except Exception as e:
             print(f"Response: {req.text}")
